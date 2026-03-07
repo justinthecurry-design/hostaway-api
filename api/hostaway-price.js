@@ -1,6 +1,5 @@
 let cachedToken = null;
 let cachedTokenExpiresAt = 0;
-let cachedCheckoutUrl = null;
 
 async function getHostawayAccessToken() {
   const now = Date.now();
@@ -49,69 +48,6 @@ async function getHostawayAccessToken() {
   return cachedToken;
 }
 
-function findCheckoutUrlDeep(value) {
-  if (!value) return null;
-
-  if (typeof value === 'string') {
-    if (/checkout/i.test(value) && /^https?:\/\//i.test(value)) {
-      return value;
-    }
-    return null;
-  }
-
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const found = findCheckoutUrlDeep(item);
-      if (found) return found;
-    }
-    return null;
-  }
-
-  if (typeof value === 'object') {
-    for (const key of Object.keys(value)) {
-      const found = findCheckoutUrlDeep(value[key]);
-      if (found) return found;
-    }
-    return null;
-  }
-
-  return null;
-}
-
-async function getCheckoutUrl(accessToken, listingId) {
-  if (cachedCheckoutUrl) return cachedCheckoutUrl;
-
-  const listingRes = await fetch(
-    `https://api.hostaway.com/v1/listings/${listingId}?attachObjects[]=bookingEngineUrls`,
-    {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'Cache-Control': 'no-cache'
-      }
-    }
-  );
-
-  const listingJson = await listingRes.json();
-
-  if (!listingRes.ok || listingJson.status === 'fail') {
-    throw new Error(
-      listingJson.message ||
-      listingJson.result ||
-      'Unable to fetch booking engine URLs'
-    );
-  }
-
-  const listing = listingJson.result || {};
-  const foundCheckoutUrl = findCheckoutUrlDeep(listing.bookingEngineUrls);
-
-  if (!foundCheckoutUrl) {
-    throw new Error('No checkout URL found in bookingEngineUrls');
-  }
-
-  cachedCheckoutUrl = foundCheckoutUrl;
-  return cachedCheckoutUrl;
-}
-
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -131,18 +67,21 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Missing checkIn/checkOut' });
   }
 
-  const numberOfGuests = Math.max(1, Number(adults || 0) + Number(children || 0));
   const listingId = process.env.HOSTAWAY_LISTING_ID;
 
   if (!listingId) {
     return res.status(500).json({ error: 'Missing HOSTAWAY_LISTING_ID' });
   }
 
+  const numberOfGuests = Math.max(1, Number(adults || 0) + Number(children || 0));
+
   try {
     const accessToken = await getHostawayAccessToken();
 
-    const checkoutUrl = await getCheckoutUrl(accessToken, listingId);
+    // Build checkout URL directly instead of trying to discover it from API
+    const checkoutUrl = `https://174903_1.holidayfuture.com/reserve/${listingId}`;
 
+    // Check availability
     const calendarRes = await fetch(
       `https://api.hostaway.com/v1/listings/${listingId}/calendar?startDate=${checkIn}&endDate=${checkOut}`,
       {
@@ -174,6 +113,7 @@ export default async function handler(req, res) {
       });
     }
 
+    // Calculate price
     const priceRes = await fetch(
       `https://api.hostaway.com/v1/listings/${listingId}/calendar/priceDetails`,
       {
@@ -201,9 +141,10 @@ export default async function handler(req, res) {
     }
 
     const result = priceJson.result || {};
-    const totalPrice = typeof result.totalPrice === 'number'
-      ? result.totalPrice
-      : Number(result.totalPrice || 0);
+    const totalPrice =
+      typeof result.totalPrice === 'number'
+        ? result.totalPrice
+        : Number(result.totalPrice || 0);
 
     const nights = Math.max(
       1,
@@ -222,6 +163,8 @@ export default async function handler(req, res) {
       checkoutUrl
     });
   } catch (error) {
-    return res.status(500).json({ error: error.message || 'Server error' });
+    return res.status(500).json({
+      error: error.message || 'Server error'
+    });
   }
 }

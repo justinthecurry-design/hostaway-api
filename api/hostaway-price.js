@@ -73,15 +73,15 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Missing HOSTAWAY_LISTING_ID' });
   }
 
-  const numberOfGuests = Math.max(1, Number(adults || 0) + Number(children || 0));
+  const adultsNum = Math.max(1, Number(adults || 0));
+  const childrenNum = Math.max(0, Number(children || 0));
+  const numberOfGuests = Math.max(1, adultsNum + childrenNum);
 
   try {
     const accessToken = await getHostawayAccessToken();
 
-    // Build checkout URL directly instead of trying to discover it from API
     const checkoutUrl = `https://174903_1.holidayfuture.com/checkout/${listingId}`;
 
-    // Check availability
     const calendarRes = await fetch(
       `https://api.hostaway.com/v1/listings/${listingId}/calendar?startDate=${checkIn}&endDate=${checkOut}`,
       {
@@ -109,11 +109,13 @@ export default async function handler(req, res) {
         totalPrice: null,
         nightlyRate: null,
         nights: 0,
-        checkoutUrl
+        checkoutUrl,
+        numberOfGuests,
+        adults: adultsNum,
+        children: childrenNum
       });
     }
 
-    // Calculate price
     const priceRes = await fetch(
       `https://api.hostaway.com/v1/listings/${listingId}/calendar/priceDetails`,
       {
@@ -160,7 +162,10 @@ export default async function handler(req, res) {
       totalPrice,
       nightlyRate,
       nights,
-      checkoutUrl
+      checkoutUrl,
+      numberOfGuests,
+      adults: adultsNum,
+      children: childrenNum
     });
   } catch (error) {
     return res.status(500).json({

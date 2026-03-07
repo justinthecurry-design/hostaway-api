@@ -1,5 +1,6 @@
 let cachedToken = null;
 let cachedTokenExpiresAt = 0;
+let cachedCheckoutUrl = null;
 
 async function getHostawayAccessToken() {
   const now = Date.now();
@@ -34,17 +35,81 @@ async function getHostawayAccessToken() {
   const tokenJson = await tokenRes.json();
 
   if (!tokenRes.ok || !tokenJson.access_token) {
-    throw new Error(tokenJson.error_description || tokenJson.message || 'Unable to generate Hostaway access token');
+    throw new Error(
+      tokenJson.error_description ||
+      tokenJson.message ||
+      'Unable to generate Hostaway access token'
+    );
   }
 
   cachedToken = tokenJson.access_token;
-
-  // Docs say token is valid after 1 second and lasts a long time.
-  // Cache slightly under the reported TTL if available.
   const ttlMs = ((tokenJson.expires_in || 3600) - 60) * 1000;
   cachedTokenExpiresAt = Date.now() + ttlMs;
 
   return cachedToken;
+}
+
+function findCheckoutUrlDeep(value) {
+  if (!value) return null;
+
+  if (typeof value === 'string') {
+    if (/checkout/i.test(value) && /^https?:\/\//i.test(value)) {
+      return value;
+    }
+    return null;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findCheckoutUrlDeep(item);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  if (typeof value === 'object') {
+    for (const key of Object.keys(value)) {
+      const found = findCheckoutUrlDeep(value[key]);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  return null;
+}
+
+async function getCheckoutUrl(accessToken, listingId) {
+  if (cachedCheckoutUrl) return cachedCheckoutUrl;
+
+  const listingRes = await fetch(
+    `https://api.hostaway.com/v1/listings/${listingId}?attachObjects[]=bookingEngineUrls`,
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Cache-Control': 'no-cache'
+      }
+    }
+  );
+
+  const listingJson = await listingRes.json();
+
+  if (!listingRes.ok || listingJson.status === 'fail') {
+    throw new Error(
+      listingJson.message ||
+      listingJson.result ||
+      'Unable to fetch booking engine URLs'
+    );
+  }
+
+  const listing = listingJson.result || {};
+  const foundCheckoutUrl = findCheckoutUrlDeep(listing.bookingEngineUrls);
+
+  if (!foundCheckoutUrl) {
+    throw new Error('No checkout URL found in bookingEngineUrls');
+  }
+
+  cachedCheckoutUrl = foundCheckoutUrl;
+  return cachedCheckoutUrl;
 }
 
 export default async function handler(req, res) {
@@ -76,12 +141,8 @@ export default async function handler(req, res) {
   try {
     const accessToken = await getHostawayAccessToken();
 
-    // Hostaway docs note a new token is valid 1 second after issuance.
-    if (!cachedTokenExpiresAt || Date.now() + 2000 > cachedTokenExpiresAt) {
-      await new Promise((resolve) => setTimeout(resolve, 1100));
-    }
+    const checkoutUrl = await getCheckoutUrl(accessToken, listingId);
 
-    // 1) Availability check
     const calendarRes = await fetch(
       `https://api.hostaway.com/v1/listings/${listingId}/calendar?startDate=${checkIn}&endDate=${checkOut}`,
       {
@@ -108,11 +169,11 @@ export default async function handler(req, res) {
         available: false,
         totalPrice: null,
         nightlyRate: null,
-        nights: 0
+        nights: 0,
+        checkoutUrl
       });
     }
 
-    // 2) Price calculation
     const priceRes = await fetch(
       `https://api.hostaway.com/v1/listings/${listingId}/calendar/priceDetails`,
       {
@@ -157,7 +218,8 @@ export default async function handler(req, res) {
       available: true,
       totalPrice,
       nightlyRate,
-      nights
+      nights,
+      checkoutUrl
     });
   } catch (error) {
     return res.status(500).json({ error: error.message || 'Server error' });

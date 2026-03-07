@@ -79,7 +79,7 @@ export default async function handler(req, res) {
     const accessToken = await getHostawayAccessToken();
 
     // Build checkout URL directly instead of trying to discover it from API
-    const checkoutUrl = `https://174903_1.holidayfuture.com/reserve/${listingId}`;
+    const checkoutUrl = `https://174903_1.holidayfuture.com/checkout/${listingId}`;
 
     // Check availability
     const calendarRes = await fetch(

@@ -1,3 +1,52 @@
+let cachedToken = null;
+let cachedTokenExpiresAt = 0;
+
+async function getHostawayAccessToken() {
+  const now = Date.now();
+
+  if (cachedToken && now < cachedTokenExpiresAt) {
+    return cachedToken;
+  }
+
+  const clientId = process.env.HOSTAWAY_ACCOUNT_ID;
+  const clientSecret = process.env.HOSTAWAY_API_KEY;
+
+  if (!clientId || !clientSecret) {
+    throw new Error('Missing HOSTAWAY_ACCOUNT_ID or HOSTAWAY_API_KEY');
+  }
+
+  const body = new URLSearchParams({
+    grant_type: 'client_credentials',
+    client_id: clientId,
+    client_secret: clientSecret,
+    scope: 'general'
+  });
+
+  const tokenRes = await fetch('https://api.hostaway.com/v1/accessTokens', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Cache-Control': 'no-cache'
+    },
+    body: body.toString()
+  });
+
+  const tokenJson = await tokenRes.json();
+
+  if (!tokenRes.ok || !tokenJson.access_token) {
+    throw new Error(tokenJson.error_description || tokenJson.message || 'Unable to generate Hostaway access token');
+  }
+
+  cachedToken = tokenJson.access_token;
+
+  // Docs say token is valid after 1 second and lasts a long time.
+  // Cache slightly under the reported TTL if available.
+  const ttlMs = ((tokenJson.expires_in || 3600) - 60) * 1000;
+  cachedTokenExpiresAt = Date.now() + ttlMs;
+
+  return cachedToken;
+}
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -19,19 +68,25 @@ export default async function handler(req, res) {
 
   const numberOfGuests = Math.max(1, Number(adults || 0) + Number(children || 0));
   const listingId = process.env.HOSTAWAY_LISTING_ID;
-  const token = process.env.HOSTAWAY_TOKEN;
 
-  if (!listingId || !token) {
-    return res.status(500).json({ error: 'Missing Hostaway env vars' });
+  if (!listingId) {
+    return res.status(500).json({ error: 'Missing HOSTAWAY_LISTING_ID' });
   }
 
   try {
+    const accessToken = await getHostawayAccessToken();
+
+    // Hostaway docs note a new token is valid 1 second after issuance.
+    if (!cachedTokenExpiresAt || Date.now() + 2000 > cachedTokenExpiresAt) {
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+    }
+
     // 1) Availability check
     const calendarRes = await fetch(
       `https://api.hostaway.com/v1/listings/${listingId}/calendar?startDate=${checkIn}&endDate=${checkOut}`,
       {
         headers: {
-          Authorization: `Bearer ${token}`,
+          Authorization: `Bearer ${accessToken}`,
           'Cache-Control': 'no-cache'
         }
       }
@@ -63,7 +118,7 @@ export default async function handler(req, res) {
       {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${token}`,
+          Authorization: `Bearer ${accessToken}`,
           'Content-Type': 'application/json',
           'Cache-Control': 'no-cache'
         },

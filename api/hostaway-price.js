@@ -48,6 +48,57 @@ async function getHostawayAccessToken() {
   return cachedToken;
 }
 
+function isValidIsoDate(value) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+function parseDateOnly(dateStr) {
+  return new Date(`${dateStr}T00:00:00`);
+}
+
+function getNightCount(checkIn, checkOut) {
+  const ms = parseDateOnly(checkOut).getTime() - parseDateOnly(checkIn).getTime();
+  return Math.round(ms / 86400000);
+}
+
+function extractPositiveInt(obj, keys, fallback) {
+  if (!obj || typeof obj !== 'object') return fallback;
+
+  for (const key of keys) {
+    const value = Number(obj[key]);
+    if (Number.isFinite(value) && value > 0) {
+      return value;
+    }
+  }
+
+  return fallback;
+}
+
+function extractBoolean(obj, keys, fallback) {
+  if (!obj || typeof obj !== 'object') return fallback;
+
+  for (const key of keys) {
+    if (key in obj) {
+      const value = obj[key];
+
+      if (typeof value === 'boolean') return value;
+      if (typeof value === 'number') return value === 1;
+      if (typeof value === 'string') {
+        const normalized = value.toLowerCase();
+        if (normalized === 'true' || normalized === '1') return true;
+        if (normalized === 'false' || normalized === '0') return false;
+      }
+    }
+  }
+
+  return fallback;
+}
+
+function toNumberOrNull(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -67,19 +118,52 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Missing checkIn/checkOut' });
   }
 
+  if (!isValidIsoDate(checkIn) || !isValidIsoDate(checkOut)) {
+    return res.status(400).json({ error: 'Dates must be YYYY-MM-DD' });
+  }
+
   const listingId = process.env.HOSTAWAY_LISTING_ID;
+  const maxGuestsEnv = Number(process.env.HOSTAWAY_MAX_GUESTS || 0);
+  const maxGuests = Number.isFinite(maxGuestsEnv) && maxGuestsEnv > 0 ? maxGuestsEnv : null;
 
   if (!listingId) {
     return res.status(500).json({ error: 'Missing HOSTAWAY_LISTING_ID' });
+  }
+
+  const nights = getNightCount(checkIn, checkOut);
+  if (!Number.isFinite(nights) || nights <= 0) {
+    return res.status(400).json({ error: 'Invalid date range' });
   }
 
   const adultsNum = Math.max(1, Number(adults || 0));
   const childrenNum = Math.max(0, Number(children || 0));
   const numberOfGuests = Math.max(1, adultsNum + childrenNum);
 
+  if (maxGuests && numberOfGuests > maxGuests) {
+    return res.status(200).json({
+      valid: false,
+      available: false,
+      reason: 'maxGuests',
+      message: `Maximum guest count is ${maxGuests}`,
+      checkIn,
+      checkOut,
+      nights,
+      adults: adultsNum,
+      children: childrenNum,
+      numberOfGuests,
+      minStay: null,
+      maxGuests,
+      totalPrice: null,
+      nightlyRate: null,
+      cleaningFee: null,
+      taxes: null,
+      bookingEngineFee: null,
+      checkoutUrl: `https://174903_1.holidayfuture.com/checkout/${listingId}`
+    });
+  }
+
   try {
     const accessToken = await getHostawayAccessToken();
-
     const checkoutUrl = `https://174903_1.holidayfuture.com/checkout/${listingId}`;
 
     const calendarRes = await fetch(
@@ -101,18 +185,87 @@ export default async function handler(req, res) {
     }
 
     const days = Array.isArray(calendarJson.result) ? calendarJson.result : [];
-    const unavailable = days.some((d) => Number(d.isAvailable) !== 1);
+    const checkInDay = days[0] || null;
 
+    const unavailable = days.some((d) => Number(d.isAvailable) !== 1);
     if (unavailable) {
       return res.status(200).json({
+        valid: false,
         available: false,
+        reason: 'unavailable',
+        message: 'Those dates are not available',
+        checkIn,
+        checkOut,
+        nights,
+        adults: adultsNum,
+        children: childrenNum,
+        numberOfGuests,
+        minStay: null,
+        maxGuests,
         totalPrice: null,
         nightlyRate: null,
-        nights: 0,
-        checkoutUrl,
-        numberOfGuests,
+        cleaningFee: null,
+        taxes: null,
+        bookingEngineFee: null,
+        checkoutUrl
+      });
+    }
+
+    const minStay = extractPositiveInt(
+      checkInDay,
+      ['minStay', 'minimumStay', 'minimumNights', 'minNights', 'minimumNumberOfNights'],
+      1
+    );
+
+    if (nights < minStay) {
+      return res.status(200).json({
+        valid: false,
+        available: false,
+        reason: 'minStay',
+        message: `Minimum stay is ${minStay} night${minStay === 1 ? '' : 's'}`,
+        checkIn,
+        checkOut,
+        nights,
         adults: adultsNum,
-        children: childrenNum
+        children: childrenNum,
+        numberOfGuests,
+        minStay,
+        maxGuests,
+        totalPrice: null,
+        nightlyRate: null,
+        cleaningFee: null,
+        taxes: null,
+        bookingEngineFee: null,
+        checkoutUrl
+      });
+    }
+
+    const checkInAllowed = extractBoolean(
+      checkInDay,
+      ['isCheckInAllowed', 'checkInAllowed', 'allowCheckIn'],
+      true
+    );
+
+    if (!checkInAllowed) {
+      return res.status(200).json({
+        valid: false,
+        available: false,
+        reason: 'checkInBlocked',
+        message: 'Check-in is not allowed on that date',
+        checkIn,
+        checkOut,
+        nights,
+        adults: adultsNum,
+        children: childrenNum,
+        numberOfGuests,
+        minStay,
+        maxGuests,
+        totalPrice: null,
+        nightlyRate: null,
+        cleaningFee: null,
+        taxes: null,
+        bookingEngineFee: null,
+        checkoutUrl
       });
     }
 
@@ -143,29 +296,34 @@ export default async function handler(req, res) {
     }
 
     const result = priceJson.result || {};
-    const totalPrice =
-      typeof result.totalPrice === 'number'
-        ? result.totalPrice
-        : Number(result.totalPrice || 0);
-
-    const nights = Math.max(
-      1,
-      Math.round(
-        (new Date(checkOut).getTime() - new Date(checkIn).getTime()) / 86400000
-      )
-    );
-
-    const nightlyRate = nights > 0 ? totalPrice / nights : totalPrice;
+    const totalPrice = toNumberOrNull(result.totalPrice);
+    const nightlyRate = totalPrice !== null && nights > 0 ? totalPrice / nights : null;
+    const cleaningFee = toNumberOrNull(result.cleaningFee);
+    const taxes = toNumberOrNull(result.taxes);
+    const bookingEngineFee =
+      toNumberOrNull(result.bookingEngineFee) ??
+      toNumberOrNull(result.guestServiceFee) ??
+      null;
 
     return res.status(200).json({
+      valid: true,
       available: true,
+      reason: 'ok',
+      message: 'ok',
+      checkIn,
+      checkOut,
+      nights,
+      adults: adultsNum,
+      children: childrenNum,
+      numberOfGuests,
+      minStay,
+      maxGuests,
       totalPrice,
       nightlyRate,
-      nights,
-      checkoutUrl,
-      numberOfGuests,
-      adults: adultsNum,
-      children: childrenNum
+      cleaningFee,
+      taxes,
+      bookingEngineFee,
+      checkoutUrl
     });
   } catch (error) {
     return res.status(500).json({

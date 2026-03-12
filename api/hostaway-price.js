@@ -99,6 +99,27 @@ function toNumberOrNull(value) {
   return Number.isFinite(n) ? n : null;
 }
 
+function buildHolidayFutureUrls({ listingId, checkIn, checkOut, adults, children }) {
+  const base = 'https://174903_1.holidayfuture.com';
+
+  const checkoutUrl = new URL(`${base}/checkout/${listingId}`);
+  checkoutUrl.searchParams.set('checkIn', checkIn);
+  checkoutUrl.searchParams.set('checkOut', checkOut);
+  checkoutUrl.searchParams.set('adults', String(adults));
+  checkoutUrl.searchParams.set('children', String(children));
+
+  const inquiryUrl = new URL(`${base}/inquiry/${listingId}`);
+  inquiryUrl.searchParams.set('checkIn', checkIn);
+  inquiryUrl.searchParams.set('checkOut', checkOut);
+  inquiryUrl.searchParams.set('adults', String(adults));
+  inquiryUrl.searchParams.set('children', String(children));
+
+  return {
+    checkoutUrl: checkoutUrl.toString(),
+    inquiryUrl: inquiryUrl.toString()
+  };
+}
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -139,6 +160,14 @@ export default async function handler(req, res) {
   const childrenNum = Math.max(0, Number(children || 0));
   const numberOfGuests = Math.max(1, adultsNum + childrenNum);
 
+  const { checkoutUrl, inquiryUrl } = buildHolidayFutureUrls({
+    listingId,
+    checkIn,
+    checkOut,
+    adults: adultsNum,
+    children: childrenNum
+  });
+
   if (maxGuests && numberOfGuests > maxGuests) {
     return res.status(200).json({
       valid: false,
@@ -158,13 +187,13 @@ export default async function handler(req, res) {
       cleaningFee: null,
       taxes: null,
       bookingEngineFee: null,
-      checkoutUrl: `https://174903_1.holidayfuture.com/checkout/${listingId}`
+      checkoutUrl,
+      inquiryUrl
     });
   }
 
   try {
     const accessToken = await getHostawayAccessToken();
-    const checkoutUrl = `https://174903_1.holidayfuture.com/checkout/${listingId}`;
 
     const calendarRes = await fetch(
       `https://api.hostaway.com/v1/listings/${listingId}/calendar?startDate=${checkIn}&endDate=${checkOut}`,
@@ -207,7 +236,8 @@ export default async function handler(req, res) {
         cleaningFee: null,
         taxes: null,
         bookingEngineFee: null,
-        checkoutUrl
+        checkoutUrl,
+        inquiryUrl
       });
     }
 
@@ -236,7 +266,8 @@ export default async function handler(req, res) {
         cleaningFee: null,
         taxes: null,
         bookingEngineFee: null,
-        checkoutUrl
+        checkoutUrl,
+        inquiryUrl
       });
     }
 
@@ -265,7 +296,8 @@ export default async function handler(req, res) {
         cleaningFee: null,
         taxes: null,
         bookingEngineFee: null,
-        checkoutUrl
+        checkoutUrl,
+        inquiryUrl
       });
     }
 
@@ -323,7 +355,8 @@ export default async function handler(req, res) {
       cleaningFee,
       taxes,
       bookingEngineFee,
-      checkoutUrl
+      checkoutUrl,
+      inquiryUrl
     });
   } catch (error) {
     return res.status(500).json({

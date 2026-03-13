@@ -52,6 +52,27 @@ function isValidIsoDate(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(value);
 }
 
+function buildHolidayFutureUrls({ listingId, checkIn, checkOut, adults, children }) {
+  const base = 'https://174903_1.holidayfuture.com';
+
+  const checkoutUrl = new URL(`${base}/checkout/${listingId}`);
+  checkoutUrl.searchParams.set('checkIn', checkIn);
+  checkoutUrl.searchParams.set('checkOut', checkOut);
+  checkoutUrl.searchParams.set('adults', String(adults));
+  checkoutUrl.searchParams.set('children', String(children));
+
+  const inquiryUrl = new URL(`${base}/inquiry/${listingId}`);
+  inquiryUrl.searchParams.set('checkIn', checkIn);
+  inquiryUrl.searchParams.set('checkOut', checkOut);
+  inquiryUrl.searchParams.set('adults', String(adults));
+  inquiryUrl.searchParams.set('children', String(children));
+
+  return {
+    checkoutUrl: checkoutUrl.toString(),
+    inquiryUrl: inquiryUrl.toString()
+  };
+}
+
 function parseDateOnly(dateStr) {
   return new Date(`${dateStr}T00:00:00`);
 }

@@ -120,27 +120,6 @@ function toNumberOrNull(value) {
   return Number.isFinite(n) ? n : null;
 }
 
-function buildHolidayFutureUrls({ listingId, checkIn, checkOut, adults, children }) {
-  const base = 'https://174903_1.holidayfuture.com';
-
-  const checkoutUrl = new URL(`${base}/checkout/${listingId}`);
-  checkoutUrl.searchParams.set('checkIn', checkIn);
-  checkoutUrl.searchParams.set('checkOut', checkOut);
-  checkoutUrl.searchParams.set('adults', String(adults));
-  checkoutUrl.searchParams.set('children', String(children));
-
-  const inquiryUrl = new URL(`${base}/inquiry/${listingId}`);
-  inquiryUrl.searchParams.set('checkIn', checkIn);
-  inquiryUrl.searchParams.set('checkOut', checkOut);
-  inquiryUrl.searchParams.set('adults', String(adults));
-  inquiryUrl.searchParams.set('children', String(children));
-
-  return {
-    checkoutUrl: checkoutUrl.toString(),
-    inquiryUrl: inquiryUrl.toString()
-  };
-}
-
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
